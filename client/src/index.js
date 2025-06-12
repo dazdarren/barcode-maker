@@ -3,11 +3,47 @@ import ReactDOM from 'react-dom/client';
 // import './index.css'; // Removed for Material-UI styling
 import App from './App';
 import reportWebVitals from './reportWebVitals';
+import { ThemeProvider, createTheme } from '@mui/material/styles';
+import CssBaseline from '@mui/material/CssBaseline';
+import { StyledEngineProvider } from '@mui/material/styles';
+
+const darkTheme = createTheme({
+  palette: {
+    mode: 'dark',
+    primary: {
+      main: '#FFFFFF',
+    },
+    secondary: {
+      main: '#CCCCCC',
+    },
+    background: {
+      default: '#121212',
+      paper: '#1E1E1E',
+    },
+  },
+  typography: {
+    fontFamily: '"Inter", "Roboto", "Helvetica", "Arial", sans-serif',
+    h3: {
+      fontWeight: 500,
+    },
+    h6: {
+      fontWeight: 400,
+    },
+  },
+  shape: {
+    borderRadius: 4,
+  },
+});
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>
-    <App />
+    <StyledEngineProvider injectFirst>
+      <ThemeProvider theme={darkTheme}>
+        <CssBaseline />
+        <App />
+      </ThemeProvider>
+    </StyledEngineProvider>
   </React.StrictMode>
 );
 

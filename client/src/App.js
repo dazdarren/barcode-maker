@@ -11,49 +11,35 @@ import {
   FormControl,
   InputLabel,
   Grid,
-  ThemeProvider,
-  createTheme,
-  CssBaseline
+  Tabs,
+  Tab,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  IconButton,
+  Tooltip
 } from '@mui/material';
 import JsBarcode from 'jsbarcode';
 import QRCode from 'qrcode';
 import html2canvas from 'html2canvas';
-
-const darkTheme = createTheme({
-  palette: {
-    mode: 'dark',
-    primary: {
-      main: '#FFFFFF', // White for a clean, minimal look
-    },
-    secondary: {
-      main: '#CCCCCC', // Light gray for secondary elements
-    },
-    background: {
-      default: '#121212',
-      paper: '#1E1E1E',
-    },
-  },
-  typography: {
-    fontFamily: '"Inter", "Roboto", "Helvetica", "Arial", sans-serif',
-    h3: {
-      fontWeight: 500,
-    },
-    h6: {
-      fontWeight: 400,
-    },
-  },
-  shape: {
-    borderRadius: 4,
-  },
-});
+import CloudUploadIcon from '@mui/icons-material/CloudUpload';
+import DownloadIcon from '@mui/icons-material/Download';
+import DeleteIcon from '@mui/icons-material/Delete';
 
 function App() {
   const [barcodeData, setBarcodeData] = useState('');
   const [barcodeType, setBarcodeType] = useState('CODE128');
   const [labelText, setLabelText] = useState('');
+  const [activeTab, setActiveTab] = useState(0);
+  const [batchItems, setBatchItems] = useState([]);
+  const [batchType, setBatchType] = useState('CODE128');
   const barcodeRef = useRef();
   const svgRef = useRef();
   const canvasRef = useRef();
+  const fileInputRef = useRef();
 
   // Helper function to calculate EAN-13 check digit
   const calculateEAN13CheckDigit = (code) => {
@@ -193,92 +179,375 @@ function App() {
     }
   };
 
+  const handleTabChange = (event, newValue) => {
+    setActiveTab(newValue);
+  };
+
+  const handleFileUpload = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const csvData = e.target.result;
+        const lines = csvData.split('\n');
+        const headers = lines[0].split(',').map(h => h.trim());
+        
+        // Check if CSV has the required columns
+        if (!headers.includes('data') || !headers.includes('label')) {
+          alert('CSV must contain "data" and "label" columns');
+          return;
+        }
+
+        const items = [];
+        for (let i = 1; i < lines.length; i++) {
+          if (!lines[i].trim()) continue;
+          
+          const values = lines[i].split(',').map(v => v.trim());
+          if (values.length >= 2) {
+            items.push({
+              id: i,
+              data: values[headers.indexOf('data')],
+              label: values[headers.indexOf('label')]
+            });
+          }
+        }
+
+        setBatchItems(items);
+      } catch (error) {
+        console.error('Error parsing CSV:', error);
+        alert('Error parsing CSV file. Please check the format.');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const generateBatchBarcode = async (item) => {
+    const tempSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const tempCanvas = document.createElement('canvas');
+    
+    try {
+      if (batchType === 'QR') {
+        await QRCode.toCanvas(tempCanvas, item.data, {
+          width: 200,
+          margin: 2,
+          color: {
+            dark: '#000000',
+            light: '#FFFFFF'
+          }
+        });
+        return tempCanvas.toDataURL();
+      } else {
+        let barcodeOptions = {
+          format: batchType,
+          width: 2,
+          height: 100,
+          displayValue: true,
+          fontSize: 20,
+          margin: 10
+        };
+
+        let data = item.data;
+        if (batchType === 'UPC') {
+          data = data.replace(/\D/g, '');
+          if (data.length < 11) {
+            data = data.padStart(11, '0');
+          } else if (data.length > 11) {
+            data = data.substring(0, 11);
+          }
+          data = data + calculateUPCCheckDigit(data);
+        } else if (batchType === 'EAN13') {
+          data = data.replace(/\D/g, '');
+          if (data.length < 12) {
+            data = data.padStart(12, '0');
+          } else if (data.length > 12) {
+            data = data.substring(0, 12);
+          }
+          data = data + calculateEAN13CheckDigit(data);
+        }
+
+        JsBarcode(tempSvg, data, barcodeOptions);
+        const svgData = new XMLSerializer().serializeToString(tempSvg);
+        const img = new Image();
+        img.src = 'data:image/svg+xml;base64,' + btoa(svgData);
+        await new Promise(resolve => img.onload = resolve);
+        
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        return canvas.toDataURL();
+      }
+    } catch (error) {
+      console.error('Error generating barcode:', error);
+      return null;
+    }
+  };
+
+  const downloadBatchBarcode = async (item) => {
+    const barcodeData = await generateBatchBarcode(item);
+    if (barcodeData) {
+      const link = document.createElement('a');
+      link.download = `${batchType === 'QR' ? 'qrcode' : 'barcode'}-${item.data}.png`;
+      link.href = barcodeData;
+      link.click();
+    }
+  };
+
+  const downloadAllBatchBarcodes = async () => {
+    for (const item of batchItems) {
+      await downloadBatchBarcode(item);
+      // Add a small delay between downloads
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  };
+
+  const removeBatchItem = (id) => {
+    setBatchItems(batchItems.filter(item => item.id !== id));
+  };
+
   return (
-    <ThemeProvider theme={darkTheme}>
-      <CssBaseline />
-      <Box
-        sx={{
-          minHeight: '100vh',
-          background: '#121212',
-          py: 4,
-        }}
-      >
-        <Container maxWidth="md">
-          <Box sx={{ my: 4 }}>
-            <Typography variant="h3" component="h1" gutterBottom align="center" sx={{ color: 'primary.main', mb: 4 }}>
-              Retail Barcode Label Generator
-            </Typography>
+    <Box
+      sx={{
+        minHeight: '100vh',
+        background: '#121212',
+        py: 4,
+      }}
+    >
+      <Container maxWidth="md">
+        <Box sx={{ my: 4 }}>
+          <Typography variant="h3" component="h1" gutterBottom align="center" sx={{ color: 'primary.main', mb: 4 }}>
+            Retail Barcode Label Generator
+          </Typography>
 
-            <Paper elevation={1} sx={{ p: 4, mb: 4, borderRadius: 1, boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)' }}>
-              <Grid container spacing={3}>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    fullWidth
-                    label={
-                      barcodeType === 'QR' ? 'QR Code Data (URL, text, etc.)' :
-                      barcodeType === 'UPC' ? 'UPC Code (12 digits, e.g., 123456789012)' :
-                      barcodeType === 'EAN13' ? 'EAN-13 Code (13 digits, e.g., 1234567890123)' :
-                      'Barcode Data'
-                    }
-                    value={barcodeData}
-                    onChange={(e) => setBarcodeData(e.target.value)}
-                    margin="normal"
-                    variant="outlined"
-                    sx={{ '& .MuiOutlinedInput-root': { borderRadius: 1 } }}
-                  />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <FormControl fullWidth margin="normal">
-                    <InputLabel>Code Type</InputLabel>
-                    <Select
-                      value={barcodeType}
-                      label="Code Type"
-                      onChange={(e) => setBarcodeType(e.target.value)}
-                      sx={{ borderRadius: 1 }}
-                    >
-                      <MenuItem value="QR">QR Code</MenuItem>
-                      <MenuItem value="CODE128">Code 128</MenuItem>
-                      <MenuItem value="EAN13">EAN-13</MenuItem>
-                      <MenuItem value="UPC">UPC</MenuItem>
-                      <MenuItem value="CODE39">Code 39</MenuItem>
-                    </Select>
-                  </FormControl>
-                </Grid>
-                <Grid item xs={12}>
-                  <TextField
-                    fullWidth
-                    label="Label Text"
-                    value={labelText}
-                    onChange={(e) => setLabelText(e.target.value)}
-                    margin="normal"
-                    variant="outlined"
-                    sx={{ '& .MuiOutlinedInput-root': { borderRadius: 1 } }}
-                  />
-                </Grid>
-              </Grid>
+          <Paper elevation={1} sx={{ mb: 4, borderRadius: 1, boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)' }}>
+            <Tabs
+              value={activeTab}
+              onChange={handleTabChange}
+              centered
+              sx={{ borderBottom: 1, borderColor: 'divider' }}
+            >
+              <Tab label="Single Barcode" />
+              <Tab label="Batch Generation" />
+            </Tabs>
 
-              <Box sx={{ mt: 3, display: 'flex', gap: 2, justifyContent: 'center' }}>
-                <Button
-                  variant="contained"
-                  color="primary"
-                  onClick={generateBarcode}
-                  disabled={!barcodeData}
-                  sx={{ borderRadius: 1, textTransform: 'none', fontWeight: 500, px: 4, py: 1.5 }}
-                >
-                  Generate {barcodeType === 'QR' ? 'QR Code' : 'Barcode'}
-                </Button>
-                <Button
-                  variant="contained"
-                  color="secondary"
-                  onClick={downloadLabel}
-                  disabled={!barcodeData}
-                  sx={{ borderRadius: 1, textTransform: 'none', fontWeight: 500, px: 4, py: 1.5 }}
-                >
-                  Download Label
-                </Button>
+            {activeTab === 0 && (
+              <Box sx={{ p: 4 }}>
+                <Grid container spacing={3}>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label={
+                        barcodeType === 'QR' ? 'QR Code Data (URL, text, etc.)' :
+                        barcodeType === 'UPC' ? 'UPC Code (12 digits, e.g., 123456789012)' :
+                        barcodeType === 'EAN13' ? 'EAN-13 Code (13 digits, e.g., 1234567890123)' :
+                        'Barcode Data'
+                      }
+                      value={barcodeData}
+                      onChange={(e) => setBarcodeData(e.target.value)}
+                      margin="normal"
+                      variant="outlined"
+                      sx={{ '& .MuiOutlinedInput-root': { borderRadius: 1 } }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <FormControl fullWidth margin="normal">
+                      <InputLabel>Code Type</InputLabel>
+                      <Select
+                        value={barcodeType}
+                        label="Code Type"
+                        onChange={(e) => setBarcodeType(e.target.value)}
+                        sx={{ borderRadius: 1 }}
+                      >
+                        <MenuItem value="QR">QR Code</MenuItem>
+                        <MenuItem value="CODE128">Code 128</MenuItem>
+                        <MenuItem value="EAN13">EAN-13</MenuItem>
+                        <MenuItem value="UPC">UPC</MenuItem>
+                        <MenuItem value="CODE39">Code 39</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid item xs={12}>
+                    <TextField
+                      fullWidth
+                      label="Label Text"
+                      value={labelText}
+                      onChange={(e) => setLabelText(e.target.value)}
+                      margin="normal"
+                      variant="outlined"
+                      sx={{ '& .MuiOutlinedInput-root': { borderRadius: 1 } }}
+                    />
+                  </Grid>
+                </Grid>
+
+                <Box sx={{ mt: 3, display: 'flex', gap: 2, justifyContent: 'center' }}>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    onClick={generateBarcode}
+                    disabled={!barcodeData}
+                    sx={{ borderRadius: 1, textTransform: 'none', fontWeight: 500, px: 4, py: 1.5 }}
+                  >
+                    Generate {barcodeType === 'QR' ? 'QR Code' : 'Barcode'}
+                  </Button>
+                  <Button
+                    variant="contained"
+                    color="secondary"
+                    onClick={downloadLabel}
+                    disabled={!barcodeData}
+                    sx={{ borderRadius: 1, textTransform: 'none', fontWeight: 500, px: 4, py: 1.5 }}
+                  >
+                    Download Label
+                  </Button>
+                </Box>
               </Box>
-            </Paper>
+            )}
 
+            {activeTab === 1 && (
+              <Box sx={{ p: 4 }}>
+                <Grid container spacing={3}>
+                  <Grid item xs={12}>
+                    <FormControl fullWidth margin="normal">
+                      <InputLabel>Batch Code Type</InputLabel>
+                      <Select
+                        value={batchType}
+                        label="Batch Code Type"
+                        onChange={(e) => setBatchType(e.target.value)}
+                        sx={{ borderRadius: 1 }}
+                      >
+                        <MenuItem value="QR">QR Code</MenuItem>
+                        <MenuItem value="CODE128">Code 128</MenuItem>
+                        <MenuItem value="EAN13">EAN-13</MenuItem>
+                        <MenuItem value="UPC">UPC</MenuItem>
+                        <MenuItem value="CODE39">Code 39</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid item xs={12}>
+                    <Box sx={{ display: 'flex', justifyContent: 'center', mb: 3 }}>
+                      <input
+                        type="file"
+                        accept=".csv"
+                        onChange={handleFileUpload}
+                        style={{ display: 'none' }}
+                        ref={fileInputRef}
+                      />
+                      <Button
+                        variant="contained"
+                        startIcon={<CloudUploadIcon />}
+                        onClick={() => fileInputRef.current.click()}
+                        sx={{ borderRadius: 1, textTransform: 'none', fontWeight: 500, px: 4, py: 1.5 }}
+                      >
+                        Upload CSV
+                      </Button>
+                    </Box>
+                    <Box sx={{ 
+                      mt: 2, 
+                      mb: 3, 
+                      p: 2, 
+                      borderRadius: 1, 
+                      bgcolor: 'background.paper',
+                      border: '1px solid',
+                      borderColor: 'divider'
+                    }}>
+                      <Typography variant="subtitle1" color="primary" gutterBottom>
+                        CSV File Instructions
+                      </Typography>
+                      
+                      <Typography variant="body2" color="text.secondary" paragraph>
+                        1. Create a CSV file with two columns: "data" and "label"
+                      </Typography>
+
+                      <Typography variant="body2" color="text.secondary" paragraph>
+                        2. The "data" column should contain:
+                        <ul style={{ marginTop: '4px', marginBottom: '8px', paddingLeft: '20px' }}>
+                          <li>For UPC codes: 12 digits (e.g., 123456789012)</li>
+                          <li>For EAN-13 codes: 13 digits (e.g., 1234567890123)</li>
+                          <li>For QR codes: Any text or URL</li>
+                          <li>For Code 128/39: Any alphanumeric text</li>
+                        </ul>
+                      </Typography>
+
+                      <Typography variant="body2" color="text.secondary" paragraph>
+                        3. The "label" column should contain the text to display below each barcode
+                      </Typography>
+
+                      <Box sx={{ 
+                        mt: 2, 
+                        p: 2, 
+                        bgcolor: 'rgba(255,255,255,0.05)', 
+                        borderRadius: 1,
+                        fontFamily: 'monospace',
+                        fontSize: '0.875rem',
+                        whiteSpace: 'pre'
+                      }}>
+                        data,label
+                        {'\n'}123456789012,Product A - UPC
+                        {'\n'}9876543210987,Product B - EAN13
+                        {'\n'}https://example.com,Product C - QR
+                        {'\n'}ABC123,Product D - Code128
+                      </Box>
+
+                      <Typography variant="body2" color="text.secondary" sx={{ mt: 2, fontStyle: 'italic' }}>
+                        Note: Make sure to save your file with a .csv extension
+                      </Typography>
+                    </Box>
+                  </Grid>
+                </Grid>
+
+                {batchItems.length > 0 && (
+                  <>
+                    <TableContainer component={Paper} sx={{ mt: 3, maxHeight: 400 }}>
+                      <Table stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>Data</TableCell>
+                            <TableCell>Label</TableCell>
+                            <TableCell align="right">Actions</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {batchItems.map((item) => (
+                            <TableRow key={item.id}>
+                              <TableCell>{item.data}</TableCell>
+                              <TableCell>{item.label}</TableCell>
+                              <TableCell align="right">
+                                <Tooltip title="Download">
+                                  <IconButton onClick={() => downloadBatchBarcode(item)}>
+                                    <DownloadIcon />
+                                  </IconButton>
+                                </Tooltip>
+                                <Tooltip title="Remove">
+                                  <IconButton onClick={() => removeBatchItem(item.id)}>
+                                    <DeleteIcon />
+                                  </IconButton>
+                                </Tooltip>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                    <Box sx={{ mt: 3, display: 'flex', justifyContent: 'center' }}>
+                      <Button
+                        variant="contained"
+                        color="primary"
+                        onClick={downloadAllBatchBarcodes}
+                        startIcon={<DownloadIcon />}
+                        sx={{ borderRadius: 1, textTransform: 'none', fontWeight: 500, px: 4, py: 1.5 }}
+                      >
+                        Download All
+                      </Button>
+                    </Box>
+                  </>
+                )}
+              </Box>
+            )}
+          </Paper>
+
+          {activeTab === 0 && (
             <Paper elevation={1} sx={{ p: 4, textAlign: 'center', borderRadius: 1, boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)' }}>
               <Box ref={barcodeRef}>
                 <svg ref={svgRef} id="barcode" style={{ display: 'block' }}></svg>
@@ -290,10 +559,10 @@ function App() {
                 )}
               </Box>
             </Paper>
-          </Box>
-        </Container>
-      </Box>
-    </ThemeProvider>
+          )}
+        </Box>
+      </Container>
+    </Box>
   );
 }
 
